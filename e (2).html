@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Color Crate Spinner</title>
+<style>
+body {
+  font-family: 'Segoe UI', Arial, sans-serif;
+  background: linear-gradient(135deg,#1b1f27,#2b313f);
+  color: #f0f0f0;
+  text-align: center;
+  padding: 30px;
+}
+h1 {
+  font-weight: 700;
+  margin-bottom: 20px;
+  text-shadow: 0 0 6px #000;
+}
+#spinnerContainer {
+  position: relative;
+  display: inline-block;
+  padding: 10px 15px;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.05);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+#preview {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 28px;
+}
+.preview-tile {
+  width: 60px;
+  height: 60px;
+  border-radius: 12px;
+  border: 2px solid rgba(255,255,255,0.2);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  transition: transform 0.2s ease;
+}
+.preview-tile:hover {
+  transform: scale(1.08);
+}
+#indicator {
+  position: absolute;
+  bottom: -2em;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 2em;
+  color: #ffd700;
+  text-shadow: 0 0 10px #ffd700;
+  pointer-events: none;
+}
+button {
+  padding: 10px 24px;
+  margin: 10px;
+  font-size: 1.1em;
+  border-radius: 8px;
+  border: none;
+  background: linear-gradient(180deg,#4cafef,#2b82df);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+button:hover {
+  background: linear-gradient(180deg,#62c1ff,#3c96ef);
+  transform: translateY(-2px);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+#result {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 20px;
+  background: rgba(255,255,255,0.05);
+  padding: 10px 20px;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+}
+#resultTile {
+  width: 80px;
+  height: 80px;
+  border-radius: 12px;
+  border: 3px solid #fff;
+  margin-bottom: 8px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+#collectNotice, #rebirthStatus {
+  margin-top: 10px;
+  font-style: italic;
+  color: #ddd;
+}
+p {
+  margin: 8px 0;
+}
+</style>
+</head>
+<body>
+<h1>Color Crate Spinner</h1>
+
+<div id="spinnerContainer">
+  <div id="preview"></div>
+  <div id="indicator">▲</div>
+</div>
+
+<button id="spinBtn">🎲 Spin</button>
+<p id="spinStatus"></p>
+
+<div id="result">
+  <div id="resultTile"></div>
+  <div><span id="resultName"></span></div>
+  <div><span id="resultRarity"></span></div>
+  <div><span id="resultProb"></span></div>
+</div>
+
+<p id="collectNotice"></p>
+<p>Collected: <span id="collectedCount">0</span>/<span id="storageLimit">200</span></p>
+<button id="rebirthBtn">🔄 Rebirth</button>
+<p id="rebirthStatus"></p>
+
+<script>
+const PREVIEW_TILES = 11;
+
+// --- Load saved data ---
+let saved = JSON.parse(localStorage.getItem('colorSpinnerSave') || '{}');
+let collectedColors = new Set(saved.collected || []);
+let rebirths = saved.rebirths || 0;
+let storageLimit = 200 * (rebirths + 1);
+
+document.getElementById('collectedCount').textContent = collectedColors.size;
+document.getElementById('storageLimit').textContent = storageLimit;
+
+function saveGame() {
+  localStorage.setItem('colorSpinnerSave', JSON.stringify({
+    collected: Array.from(collectedColors),
+    rebirths: rebirths
+  }));
+}
+
+function colorToInt(r,g,b){
+  return (r<<16) | (g<<8) | b;
+}
+function seededRandom(seed){
+  seed = (seed * 9301 + 49297) % 233280;
+  return seed/233280;
+}
+
+// rarity system unchanged
+function rarityForColor(r,g,b){
+  const int = colorToInt(r,g,b);
+  const rnd = seededRandom(int);
+  if (rnd < 0.50) return {denom:2, prob:0.5, name:"Common"};
+  if (rnd < 0.80) return {denom:5, prob:0.2, name:"Uncommon"};
+  if (rnd < 0.95) return {denom:20, prob:0.05, name:"Rare"};
+  if (rnd < 0.995) return {denom:500, prob:0.005, name:"Epic"};
+  if (rnd < 0.9995) return {denom:10000, prob:0.0005, name:"Legendary"};
+  return {denom:100000, prob:0.00001, name:"Mythical"};
+}
+
+function sampleColorWeightedByRarity(){
+  const r = Math.floor(Math.random()*256);
+  const g = Math.floor(Math.random()*256);
+  const b = Math.floor(Math.random()*256);
+  const rarity = rarityForColor(r,g,b);
+  return {r,g,b,
+    hex:`#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`,
+    rarityDenom:rarity.denom,
+    prob:rarity.prob,
+    rarityName:rarity.name};
+}
+
+const previewEl = document.getElementById('preview');
+const spinBtn = document.getElementById('spinBtn');
+const spinStatus = document.getElementById('spinStatus');
+const resultArea = document.getElementById('result');
+const resultTile = document.getElementById('resultTile');
+const resultName = document.getElementById('resultName');
+const resultRarity = document.getElementById('resultRarity');
+const resultProb = document.getElementById('resultProb');
+const collectNotice = document.getElementById('collectNotice');
+const collectedCountEl = document.getElementById('collectedCount');
+const storageLimitEl = document.getElementById('storageLimit');
+const rebirthBtn = document.getElementById('rebirthBtn');
+const rebirthStatus = document.getElementById('rebirthStatus');
+
+for(let i=0;i<PREVIEW_TILES;i++){
+  const div = document.createElement('div');
+  div.className='preview-tile';
+  previewEl.appendChild(div);
+}
+
+function refreshPreview(){
+  for(let j=0;j<PREVIEW_TILES;j++){
+    const it = sampleColorWeightedByRarity();
+    const el = previewEl.children[j];
+    el.style.background = it.hex;
+    el.title = `${it.hex} — 1 in ${it.rarityDenom}`;
+  }
+}
+
+async function spinOnce(){
+  spinBtn.disabled = true;
+  spinStatus.textContent = 'Spinning...';
+  resultArea.style.display = 'none';
+  collectNotice.textContent = '';
+
+  const finalItem = sampleColorWeightedByRarity();
+  const totalSteps = 36 + Math.floor(Math.random()*24);
+
+  const currentPreview=[];
+  for (let i=0;i<Math.max(PREVIEW_TILES,totalSteps)+PREVIEW_TILES;i++){
+    currentPreview.push(sampleColorWeightedByRarity());
+  }
+  const centerIndex = Math.floor(PREVIEW_TILES/2) - 1;
+  const finalIndex = (totalSteps + centerIndex) % currentPreview.length;
+  currentPreview[finalIndex] = finalItem;
+
+  for(let step=0; step<totalSteps; step++){
+    for(let j=0;j<PREVIEW_TILES;j++){
+      const idx = (step + j) % currentPreview.length;
+      const it = currentPreview[idx];
+      const el = previewEl.children[j];
+      el.style.background = it.hex;
+      el.title = `${it.hex} — 1 in ${it.rarityDenom}`;
+    }
+    const t = step/totalSteps;
+    const wait = 8 + Math.floor(120*Math.pow(t,1.8));
+    await new Promise(r=>setTimeout(r,wait));
+  }
+
+  const landed = finalItem;
+  resultTile.style.background = landed.hex;
+  resultName.textContent = landed.hex;
+  resultRarity.textContent = `${landed.rarityName} (1 in ${landed.rarityDenom})`;
+  resultProb.textContent = (landed.prob*100).toFixed(5)+'%';
+  resultArea.style.display = 'flex';
+  spinStatus.textContent = 'Spin complete';
+  spinBtn.disabled = false;
+
+  if (collectedColors.size >= storageLimit) {
+    collectNotice.textContent = 'Storage full! Rebirth to increase capacity.';
+  } else {
+    if (!collectedColors.has(landed.hex)) {
+      collectedColors.add(landed.hex);
+    }
+    collectedCountEl.textContent = collectedColors.size;
+    saveGame();
+  }
+}
+
+rebirthBtn.addEventListener('click',()=>{
+  const nextReq = 200*(rebirths+1);
+  if (collectedColors.size>=nextReq){
+    rebirths++;
+    storageLimit = 200*(rebirths+1);
+    storageLimitEl.textContent = storageLimit;
+    collectedColors.clear();
+    collectedCountEl.textContent = '0';
+    rebirthStatus.textContent = `Rebirthed! New limit: ${storageLimit}`;
+    saveGame();
+  } else {
+    rebirthStatus.textContent = `Need ${nextReq} colors to rebirth.`;
+  }
+});
+
+refreshPreview();
+spinBtn.addEventListener('click',spinOnce);
+</script>
+</body>
+</html>
